@@ -1,7 +1,4 @@
-# Inspired by: https://jessesw.com/Data-Science-Skills/
-
-
-from __future__ import division
+import position as pos
 from operator import truediv
 from bs4 import BeautifulSoup
 import requests
@@ -11,39 +8,21 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import sys
 import pickle
-import os
 from dateutil.parser import parse
 import html2text
 from collections import Counter
 from nltk.corpus import stopwords
 import string
 from urlparse import urlparse
-import seaborn as sns
-# import nltk
-# nltk.download('stopwords')
 
 
-os.chdir('/Users/ema/datascience/General Assembly (Sydney, 2017)/side_project/data_science_jobs_australia')
-import position as pos
-# from position import *
-
-
-job = 'data-science'
-url = 'http://jobs.careerone.com.au/search'
-pages_file = '/Users/ema/datascience/General Assembly (Sydney, 2017)/side_project/data_science_jobs_australia/pages.p'
-positions_file = '/Users/ema/datascience/General Assembly (Sydney, 2017)/side_project/data_science_jobs_australia/positions.p'
-
-MAX_NUM_PAGES = 30
-
-
-
-def fetch_and_save_pages(url, pages_file):
+def fetch_and_save_pages(url, query, pages_file, max_num_pages):
   pages = list()
   page_number = 1
   print(url)
-  while page_number < MAX_NUM_PAGES:
+  while page_number < max_num_pages:
     page_content = requests.get(url, 
-          params={'q': 'data-science', 
+          params={'q': query, 
                   'page': page_number, 
                   'sort': 'dt.rv.di'})
     status_code = page_content.status_code
@@ -85,10 +64,30 @@ def fetch_positions(pages):
       state   = l.find('meta', {'itemprop': 'addressRegion'})
       state   = state['content'] if state else ''
       company = c.find('a')['title'] if c.find('a') else ''
+      
+      title   = title.encode('unicode-escape').lower()
+      url     = url.encode('unicode-escape').lower()
+      company = company.encode('unicode-escape').lower()
+      city    = city.encode('unicode-escape').lower()
+      state   = state.encode('unicode-escape').lower()
+      
       p = pos.Position(title, url, date, company, city, state)
       positions.append(p)
 
   return positions
+
+
+def preprocess_job_info(positions):
+  for p in positions:
+    city = p.get_city()
+    city = city.replace(' cbd', '')
+    city = city.replace('north', '')
+    city = city.title()
+    p.set_city(city)
+
+    state = p.get_state()
+    state = state.upper()
+    p.set_state(state)
 
 
 def fetch_descriptions(positions):
@@ -136,60 +135,26 @@ def load_positons_from_disk(positions_file):
 
 
 def preprocess_descriptions(positions, stopwords):
-  res = []
+  all_words = []
   for idx, p in enumerate(positions):
     if p:
-      words = p.preprocess_description(stopwords)
+      p.preprocess_description(stopwords)
+      words = p.get_description_words()
       if words:
-        res.extend(words)
+        all_words.extend(words)
       else:
         print idx
     else:
       print idx
 
-  return res
+  return all_words
 
 
-def preprocess_descriptions(positions, stop_words):
-  description_words = []
-  for p in positions:
-    description = p.get_description()
-    if description:
-      text = description.strip().lower()
-      text = text.encode('unicode-escape')
-      text = text.translate(None, string.punctuation)
-      words = text.split(' ')
-      if words:
-        words = [w for w in words if not w in stop_words]
-
-        # ngrams = get_ngrams(words)
-        n = 2
-        ngrams = []
-        for i in range(len(words) - n + 1):
-          ngrams.append(' '.join(words[i:i+n]))
-        ngrams = list(set(ngrams))
-        words  = list(set(words))
-        description_words.extend(ngrams)
-        description_words.extend(words)
-
-  return description_words
-
-
-# def ngram_descriptions(positions, n):
-#   ngrams = []
-#   for p in positions:
-#     words = p.get_description_words()
-#     for i in range(len(words) - n + 1):
-#       ngrams.append(' '.join(words[i:i+n]))
-
-#   return ngrams
-
-
-def get_relevant_desc(words_freq):
-  job_title_dict = Counter({
-      'Data Scientist'   : words_freq['data scientist'] + words_freq['data science'],
-      'Data Analyst' : words_freq['data analyst'] + words_freq['data analysis'] + words_freq['data analytics'],
-      'Big Data'       : words_freq['big data'],
+def get_relevant_dict(words):
+  words_freq = Counter(words)
+  job_titles_dict = Counter({
+      'Data Scientist' : words_freq['data scientist'],
+      'data analytics' : words_freq['data analytics'],
   })
 
   prog_lang_dict = Counter({
@@ -214,7 +179,7 @@ def get_relevant_desc(words_freq):
   })  
 
   hadoop_dict = Counter({
-      'Hadoop'     : words_freq['hadoop_dict'],
+      'Hadoop'     : words_freq['hadoop'],
       'MapReduce'  : words_freq['mapreduce'],
       'Spark'      : words_freq['spark'],
       'Pig'        : words_freq['pig'],
@@ -234,53 +199,55 @@ def get_relevant_desc(words_freq):
       'MongoDB'    : words_freq['mongodb']
   })
 
-  # machine_dict = Counter({
-  #     'Recommendation Engine' : words_freq['recommendation engine'] + words_freq['recommendation system'] + words_freq['recommender engine'] + words_freq['recommender system'],
-  # })
-  # print(machine_dict)
+  phd_dict = Counter({
+      'PhD': words_freq['phd']
+  })
 
-  skills_data = prog_lang_dict + analysis_tool_dict + hadoop_dict + database_dict
+  machine_dict = Counter({
+      'Machine Learning': words_freq['machine learning']
+  })
+
+  skills_dict = prog_lang_dict + analysis_tool_dict + hadoop_dict + database_dict + phd_dict
   
-  # skills_data = {}
-  # skills_data['job_title_dict'] = job_title_dict
-  # skills_data['prog_lang_dict'] = prog_lang_dict
-  # skills_data['analysis_tool_dict'] = analysis_tool_dict
-  # skills_data['hadoop_dict'] = hadoop_dict
-  # skills_data['database_dict'] = database_dict
-  
-  skills = pd.DataFrame(skills_data.items(), columns = ['skill', 'posts'])
-  
-  job_titles = pd.DataFrame(job_title_dict.items(), columns = ['job_titles', 'posts'])
+  return skills_dict, job_titles_dict
+
+
+def skills_job_titles_dataframe(skills_dict, job_titles_dict, num_positions):
+  skills = pd.DataFrame(skills_dict.items(), columns=['skill', 'posts'])
+  job_titles = pd.DataFrame(job_titles_dict.items(), columns=['job_titles', 'posts'])
+
+  skills['percentage'] = skills.posts / float(num_positions) * 100
+  job_titles['percentage'] = job_titles.posts / float(num_positions) * 100
+
+  skills = skills.sort_values('posts', ascending=False)
+  job_titles = job_titles.sort_values('posts', ascending=False)
 
   return skills, job_titles
 
 
+def build_dataframe(positions):
+  columns = ['Data Scientist', 'Data Analyst', 'Big Data', 'R', 'Python', 'Java', 'C++', 'Ruby', 'Perl', 'Matlab', 'JavaScript', 'Scala', 'Excel', 'Tableau', 'D3.js', 'SAS', 'SPSS', 'D3', 'Hadoop', 'MapReduce', 'Spark', 'Pig', 'Hive', 'Shark', 'Oozie', 'ZooKeeper', 'Flume', 'Mahout', 'SQL', 'NoSQL', 'HBase', 'Cassandra', 'MongoDB', 'Machine Learning', 'City', 'State']
+  columns_dict = Counter({v: 0 for v in columns})
+  data = pd.DataFrame(columns=columns)
 
-# pages = fetch_and_save_pages(url, pages_file)
-# pages = load_pages_from_disk(pages_file)
-# positions = fetch_positions(pages)
-# positions = fetch_descriptions(positions)
-# save_positons(positions, positions_file)
-positions = load_positons_from_disk(positions_file)
-stop_words = set(stopwords.words("english"))
-words = preprocess_descriptions(positions, stop_words)
-words_freq = Counter(words)
-skills, job_titles = get_relevant_desc(words_freq)
-number_positions = len(positions)
-skills['percentage'] = skills.posts / float(number_positions) * 100
-job_titles['percentage'] = job_titles.posts / float(number_positions) * 100
-skills = skills.sort_values('posts', ascending=False)
-job_titles = job_titles.sort_values('posts', ascending=False)
+  for idx, p in enumerate(positions):
+    words = p.get_description_words()
+    skills_dic, job_titles_dict = get_relevant_dict(words)
+    new_row = columns_dict | skills_dic | job_titles_dict
+    city = p.get_city()
+    state = p.get_state()
+    company = p.get_company()
+    new_row = new_row | Counter({'City': city})
+    new_row = new_row | Counter({'State': state})
+    new_row = new_row | Counter({'Company': company})
+    data = data.append(new_row, ignore_index=True)
 
-print(skills)
-print(job_titles)
+    for k, v in new_row.items():
+      if type(v) != str and v > 1:
+        print(idx)
 
-sns.barplot(data=skills, x='percentage', y='skill')
-sns.plt.show()
+  data = data.fillna(0)
 
-sns.barplot(data=job_titles, x='percentage', y='job_title')
-sns.plt.show()
-
-
+  return data
 
 

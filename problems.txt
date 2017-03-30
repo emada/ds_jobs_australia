@@ -1,0 +1,5 @@
+PROBLEMS
+  Jobs can have the following sinonymns for
+    data science: data scientist
+    data analytics: data analysis, data analyst
+
